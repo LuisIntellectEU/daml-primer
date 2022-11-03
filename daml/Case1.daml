@@ -1,0 +1,92 @@
+module Case1 where
+
+import Daml.Script
+
+template ContractWith5Attributes
+  with
+    party : Party
+    observers : [Party]
+    attribute1 : Text
+    attribute2 : Bool
+    attribute3 : Int
+    attribute4 : Decimal
+    attribute5 : Optional Text
+  where
+    signatory party
+    observer observers
+    nonconsuming choice GiveVisibilityToGroupX : ContractId ContractWithXVisibility
+      with 
+        x : Party
+      controller party
+        do
+          create ContractWithXVisibility with ..
+    nonconsuming choice GiveVisibilityToGroupY : ContractId ContractWithYVisibility
+      with 
+        y : Party
+      controller party
+        do
+          create ContractWithYVisibility with ..
+    
+    nonconsuming choice GiveVisibilityToGroupXAndY : (ContractId ContractWithXVisibility, ContractId ContractWithYVisibility)
+      with 
+        x : Party
+        y : Party
+      controller party
+        do
+          --xCid <- create ContractWithXVisibility with ..
+          --yCid <- create ContractWithYVisibility with ..
+          xCid <- exercise self GiveVisibilityToGroupX with ..
+          yCid <- exercise self GiveVisibilityToGroupY with ..
+          return (xCid, yCid)
+
+          
+template ContractWithXVisibility
+  with
+    party : Party
+    x : Party
+    attribute1 : Text
+    attribute2 : Bool
+    attribute3 : Int
+  where
+    signatory party
+    observer x
+
+template ContractWithYVisibility
+  with
+    party : Party
+    y     : Party
+    attribute3 : Int
+    attribute4 : Decimal
+    attribute5 : Optional Text
+  where
+    signatory party
+    observer y
+
+setup : Script ()
+setup = script do
+    -- user_setup_begin
+  alice <- allocatePartyWithHint "Alice" (PartyIdHint "Alice")
+  bob <- allocatePartyWithHint "Bob" (PartyIdHint "Bob")
+  steven <- allocatePartyWithHint "Steven" (PartyIdHint "Steven")
+  public <- allocatePartyWithHint "Public" (PartyIdHint "Public")
+  aliceId <- validateUserId "alice"
+  bobId <- validateUserId "bob"
+  stevenId <- validateUserId "steven"
+  publicId <- validateUserId "public"
+  createUser (User aliceId (Some alice)) [CanActAs alice]
+  createUser (User bobId (Some bob)) [CanActAs bob, CanReadAs public]
+  createUser (User stevenId (Some steven)) [CanActAs steven]
+  createUser (User publicId (Some public)) [CanActAs public]
+-- user_setup_end
+  cid <- submit alice do
+    createCmd ContractWith5Attributes with
+      party = alice
+      observers  = []
+      attribute1 = "Text"
+      attribute2 = True
+      attribute3 = 1_000_000
+      attribute4 = 2.0
+      attribute5 = None
+  submit alice do
+    exerciseCmd cid GiveVisibilityToGroupXAndY with x = bob; y = steven
+  return ()

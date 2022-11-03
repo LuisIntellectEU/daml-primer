@@ -1,0 +1,144 @@
+module Main where
+
+import Daml.Script
+
+type IssuedAssetId = ContractId IssuedAsset
+
+template Agreement
+  with
+    public : Party
+    owner : Party
+  where
+    signatory owner, public
+    key (public, owner) : (Party, Party)
+    maintainer key._1
+
+    choice ProvideIssuedAsset : IssuedAsset
+      with
+        issuer : Party
+        name   : Text
+      controller owner
+        do
+          snd <$> fetchByKey @IssuedAsset (issuer, name)
+
+template IssuedAsset
+  with
+    issuer : Party
+    owner  : Party
+    name   : Text
+    public : Party
+  where
+    ensure name /= ""
+    signatory issuer, owner
+    observer owner, public
+    
+    key (issuer, name) : (Party, Text)
+    maintainer key._1
+
+    choice Give : IssuedAssetId
+      with
+        newOwner : Party
+      controller owner
+      do create this with
+           owner = newOwner
+
+    nonconsuming choice ProposeToGive : ContractId ProposalToGiveAsset
+      with
+        proposed : Party
+      controller owner
+      do
+        let 
+          asset = TransferedAsset with owner; issuer; name
+        create ProposalToGiveAsset with ..
+
+template ProposalToGiveAsset
+  with
+    asset : TransferedAsset
+    proposed : Party
+  where 
+    signatory asset.owner--, asset.issuer
+    observer proposed
+    choice Accept : ContractId TransferedAsset
+      controller proposed
+        do
+          create asset with owner = proposed
+     
+template TransferedAsset
+  with
+    issuer : Party
+    owner : Party
+    name : Text
+  where
+    ensure name /= ""
+    signatory owner
+    observer owner
+    choice ProposeToGiveTransferedAsset : ContractId ProposalToGiveAsset
+      with
+        proposed : Party
+        public   : Party
+      controller owner
+      do
+        --fetchByKey @IssuedAsset (issuer, name)
+        exerciseByKey @Agreement (public, owner) ProvideIssuedAsset with ..
+        create ProposalToGiveAsset with asset = this; ..
+
+
+setup : Script ()
+setup = script do
+-- user_setup_begin
+  alice <- allocatePartyWithHint "Alice" (PartyIdHint "Alice")
+  bob <- allocatePartyWithHint "Bob" (PartyIdHint "Bob")
+  steven <- allocatePartyWithHint "Steven" (PartyIdHint "Steven")
+  public <- allocatePartyWithHint "Public" (PartyIdHint "Public")
+  aliceId <- validateUserId "alice"
+  bobId <- validateUserId "bob"
+  stevenId <- validateUserId "steven"
+  publicId <- validateUserId "public"
+  createUser (User aliceId (Some alice)) [CanActAs alice]
+  createUser (User bobId (Some bob)) [CanActAs bob, CanReadAs public]
+  createUser (User stevenId (Some steven)) [CanActAs steven]
+  createUser (User publicId (Some public)) [CanActAs public]
+-- user_setup_end
+  
+  alicePublicAgreement  <- submitMulti [alice, public]  [] do createCmd Agreement with public; owner = alice
+  bobPublicAgreement    <- submitMulti [bob, public]    [] do createCmd Agreement with public; owner = bob
+  stevenPublicAgreement <- submitMulti [steven, public] [] do createCmd Agreement with public; owner = steven
+
+  aliceTV <- submit alice do
+    createCmd IssuedAsset with
+      issuer = alice
+      owner = alice
+      name = "TV"
+      public
+
+  bobRadio <- submit bob do
+    createCmd IssuedAsset with
+      issuer = bob
+      owner = bob
+      name = "Radio"
+      public
+
+  aliveTVProposal <- submit alice do
+    exerciseCmd aliceTV ProposeToGive with proposed = bob
+  
+  bobTV <- submit bob do
+    exerciseCmd aliveTVProposal Accept
+
+  bobTVProposal <- submitMulti [bob] [public] do
+    exerciseCmd bobTV ProposeToGiveTransferedAsset with proposed = steven; public
+  
+  --bobTV <- submit steven do
+  --  exerciseCmd bobTVProposal Accept
+
+  
+  {-}
+  bobTV <- submit alice do
+    exerciseCmd aliceTV Give with newOwner = bob
+
+  aliceTv <- submit bob do
+    exerciseCmd bobTV Give with newOwner = alice
+
+  submit alice do
+    exerciseCmd aliceTv Give with newOwner = steven--}
+
+  return ()
