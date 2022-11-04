@@ -1,0 +1,63 @@
+module Painter where
+
+import Daml.Script
+
+template PaintAccept
+  with
+    painter : Party
+    customer : Party
+    id : Text
+  where
+    signatory painter, customer  
+
+template PaintOffer
+  with
+    painter : Party
+    customer : Party
+    bank : Party
+  where
+    signatory painter, 
+    observer customer
+    choice Accept : (ContractId IOU, ContractId PaintAccept)
+      with
+        id : Text
+        iouCid : ContractId IOU
+     controller customer
+        do
+          newIouCid <- exercise iouCid Transfer with newOwner = painter
+          paintAcceptCid <- create PaintAccept with ..
+          return (newIouCid, paintAcceptCid)
+          
+template IOU
+  with
+    bank : Party
+    owner : Party
+    quantity : Decimal
+  where
+    signatory bank
+    observer owner 
+    choice Transfer : ContractId IOU
+      with 
+        newOwner : Party
+      controller owner
+        do
+          create this with owner = newOwner
+
+demo : Script ()
+demo = script do
+  a <- allocateParty "Alice"
+  b <- allocateParty "Bank"
+  p <- allocateParty "Painter"
+
+  iouCid <- submit b do createCmd IOU with bank = b; owner = a; quantity = 100.0
+
+  paintOfferCid <- submit p do createCmd PaintOffer with painter = p; customer = a; bank = b
+
+  (newIouCid, paintAcceptCid) <- submit a do exerciseCmd paintOfferCid Accept with id = "P123"; iouCid
+
+  submit p do exerciseCmd newIouCid Transfer with newOwner = b 
+  
+  return ()
+  
+          
+    
