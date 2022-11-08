@@ -1,0 +1,31 @@
+module Tutor.ChildSupport where
+
+-- child support money
+-- pay monthly - specified amount
+--
+
+data PayFrequency = Monthly | Weekly
+  deriving (Show, Eq)
+
+template ChildSupportOrder
+  with
+    receiver        : Party
+    sender          : Party
+    amount          : Decimal
+    issuer          : Party
+    duration        : Int
+    payDate         : Int
+    payFrequency    : PayFrequency
+    createdAt       : Time
+    receiverAccount : ContractId Account
+  where
+    signatory issuer
+    observer receiver, sender
+
+template Account
+  with
+    issuer  : Party -- bank
+    owner   : Party
+    balance : Decimal
+  where
+    signatory issuer, owner
