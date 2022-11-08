@@ -1,2 +1,46 @@
 module Team1.Auction where
 
+import Daml.Script
+
+template ClientReq
+  with
+    owner : Party
+    client : Party
+  where
+    signatory client
+    observer owner
+    key (client,owner) : (Party, Party)
+    maintainer key._1
+
+    choice Decline : ()
+      controller owner
+        do
+          return ()
+
+    choice Approve : ContractId ApproveService
+      controller owner
+        do
+          create ApproveService with ..
+
+template ApproveService
+  with 
+    owner : Party
+    client : Party
+  where
+    signatory client, owner
+    key (client, owner) : (Party, Party)   
+    maintainer fst key, snd key
+
+
+
+
+
+
+setup : Script ()
+setup = script do
+  client1 <- allocateParty "C1"
+  owner <- allocateParty "owner"
+  clientRequestId <- submit client1 do createCmd ClientReq with owner;
+  return ()
+    
+

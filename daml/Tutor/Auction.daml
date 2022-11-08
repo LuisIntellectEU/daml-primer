@@ -1,2 +1,132 @@
 module Tutor.Auction where
 
+import Daml.Script
+
+template CustomerRequest 
+  with 
+    auctioneer : Party 
+    customer    : Party 
+  where
+    signatory customer
+    observer auctioneer
+    key (customer, auctioneer) : (Party, Party)
+    maintainer key._1   
+
+    choice Reject : ()       
+      controller auctioneer
+        do
+          return ()
+
+    choice Accept : ContractId Service
+      controller auctioneer
+        do          
+          create Service with ..
+          
+template Service
+  with
+    auctioneer : Party 
+    customer    : Party 
+  where
+    signatory customer, auctioneer
+    key (customer, auctioneer) : (Party, Party)
+    maintainer fst key, snd key    
+    -- Choice to put an asset to auction
+    nonconsuming choice PutToAuction : ContractId RequestAuction 
+      with
+        id : Text
+        item : Text
+        quantity : Decimal
+        basePrice : Decimal
+      controller customer
+        do
+          create RequestAuction with seller = customer; ..  
+    nonconsuming choice AcceptAndAdvertise : ContractId Auction 
+      with
+        --requestAuctionCid : ContractId RequestAuction
+        serviceCidList : [ContractId Service]
+        id : Text
+      controller auctioneer
+        do
+          serviceList <- mapA fetch serviceCidList
+          let 
+            filteredServiceList = filter (\ service -> service.customer /= customer) serviceList
+            bidders = map (.customer) filteredServiceList
+          (requestAuctionCid, requestAuction@RequestAuction{..}) <- fetchByKey @RequestAuction (auctioneer, customer, id)
+          create Auction with bidders; ..
+
+                   
+          
+template RequestAuction 
+  with
+    auctioneer : Party
+    seller : Party
+    --bidders : [Party]
+    id : Text
+    item : Text
+    quantity : Decimal
+    basePrice : Decimal
+  where
+    signatory auctioneer, seller
+    --observer bidders
+    key (auctioneer, seller, id) : (Party, Party, Text)
+    maintainer key._1, key._2
+
+template Auction 
+  with
+    auctioneer : Party
+    seller : Party
+    bidders : [Party]
+    id : Text
+    item : Text
+    quantity : Decimal
+    basePrice : Decimal
+  where
+    signatory auctioneer, seller
+    observer bidders
+    key (auctioneer, seller, id) : (Party, Party, Text)
+    maintainer key._1, key._2
+    
+    
+
+
+    
+          
+
+                 
+    
+
+    
+      
+
+
+
+
+setup : Script ()
+setup = script do
+  customer1  <- allocateParty "Customer One"
+  customer2  <- allocateParty "Customer Two"
+  customer3  <- allocateParty "Customer Three"
+  customer4  <- allocateParty "Customer Four"
+  auctioneer <- allocateParty "Auctioneer"
+  -- STEP 1 -- Invite customer / Customer request
+  submit customer1 do createCmd CustomerRequest with auctioneer; customer = customer1    
+  submit customer2 do createCmd CustomerRequest with auctioneer; customer = customer2    
+  submit customer3 do createCmd CustomerRequest with auctioneer; customer = customer3    
+  submit customer4 do createCmd CustomerRequest with auctioneer; customer = customer4    
+  -- STEP 2. Accept or Reject Customer Request
+  -- submit auctioneer do exerciseCmd customerReqCid Reject 
+  submit auctioneer do exerciseByKeyCmd @CustomerRequest (customer1, auctioneer) Accept 
+  submit auctioneer do exerciseByKeyCmd @CustomerRequest (customer2, auctioneer) Accept 
+  submit auctioneer do exerciseByKeyCmd @CustomerRequest (customer3, auctioneer) Accept 
+  submit auctioneer do exerciseByKeyCmd @CustomerRequest (customer4, auctioneer) Accept 
+  --
+  serviceTupleList <- query @Service auctioneer
+  let serviceCidList = fmap fst serviceTupleList
+  -- STEP 3. Customer puts something to auction
+
+  requestAuctionCid <- submit customer1 do exerciseByKeyCmd @Service (customer1, auctioneer) PutToAuction with id = "Auction1"; item = "Rare Jewel"; quantity = 1.0; basePrice = 1_000_000.0
+  auctionCid <- submit auctioneer do exerciseByKeyCmd @Service (customer1, auctioneer) AcceptAndAdvertise with serviceCidList; id = "Auction1"
+  return ()
+  
+    
+
