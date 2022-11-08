@@ -31,16 +31,11 @@ template ApproveService
     key (client, owner) : (Party, Party)   
     maintainer fst key, snd key
 
-
-
-
-
-
 setup : Script ()
 setup = script do
   client1 <- allocateParty "C1"
   owner <- allocateParty "owner"
-  clientRequestId <- submit client1 do createCmd ClientReq with owner;
+  clientRequestId <- submit client1 do createCmd ClientReq with owner; client = client1
   return ()
     
 
