@@ -1,6 +1,8 @@
 module Main where
 
 import Daml.Script
+import Daml.Trigger qualified as T
+import DA.Foldable qualified as Foldable
 
 type IssuedAssetId = ContractId IssuedAsset
 
@@ -82,6 +84,22 @@ template TransferedAsset
         exerciseByKey @Agreement (public, owner) ProvideIssuedAsset with ..
         create ProposalToGiveAsset with asset = this; ..
 
+-- daml trigger --ledger-host localhost --ledger-port 6865 --ledger-user bob --dar .daml/dist/daml-primer-0.0.1.dar --trigger-name Main:noOp
+-- daml trigger --ledger-host localhost --ledger-port 6865 --ledger-user steven --dar .daml/dist/daml-primer-0.0.1.dar --trigger-name Main:noOp
+noOp : T.Trigger ()
+noOp = T.Trigger with
+  initialize = pure ()
+  updateState = \_ -> pure ()
+  rule = handleRule
+  registeredTemplates = T.RegisteredTemplates [T.registeredTemplate @ProposalToGiveAsset]
+  heartbeat = None
+  
+handleRule : Party -> T.TriggerA () ()
+handleRule party = do
+  debug "triggered"
+  list <- T.query @ProposalToGiveAsset
+  let filtered = filter (\ (cid, c) -> c.proposed == party) list
+  Foldable.mapA_ (\ (cid, c) -> T.dedupExercise cid Accept) filtered
 
 setup : Script ()
 setup = script do
