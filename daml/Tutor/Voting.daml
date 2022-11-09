@@ -1,1 +1,117 @@
 module Tutor.Voting where
+
+import Daml.Script
+import DA.List
+
+template VotingTopic
+  with
+    id      : Text
+    topic   : Text
+    issuer  : Party
+    judge   : Party
+    voters  : [Party]
+  where
+    signatory issuer, judge
+    observer voters
+
+    nonconsuming choice SubmitVote : ContractId Vote
+      with
+        pol   : Pol
+        party : Party
+      controller party
+      do
+        assert (party `elem` voters)
+        create Vote with votingTopic = this, ..
+
+    choice CompleteVoting : ContractId VotingResult
+      with
+        voteCids : [ContractId Vote]
+      controller issuer
+      do
+        allVotes <- mapA (\id -> fetch id) voteCids
+        let 
+          sortedVotes = (sortOn (\x -> x.pol) ) allVotes
+          [firstList, secondList] = (groupOn (\x -> x.pol) ) sortedVotes
+          
+        if length firstList > length secondList then do
+          create VotingResult with result = (head firstList).pol, votingTopic = this, ..
+        else
+          create VotingResult with result = (head secondList).pol, votingTopic = this, ..
+
+
+template VotingResult
+  with
+    issuer      : Party
+    result      : Pol
+    votingTopic : VotingTopic
+  where
+    signatory issuer
+    observer votingTopic.voters, votingTopic.judge
+
+template RequestVotingTopic
+  with
+    topic       : Text
+    issuer      : Party
+    judge       : Party
+    voters      : [Party]
+    id          : Text
+  where
+    signatory issuer
+    observer judge
+
+    choice Accept : ContractId VotingTopic
+      controller judge
+      do
+        create VotingTopic with ..
+
+    choice Reject : ()
+      controller judge
+      do
+        return ()
+
+data Pol = Yes | No
+  deriving (Show, Eq, Ord)
+
+template Vote
+  with
+    pol         : Pol
+    party       : Party
+    issuer      : Party
+    judge       : Party
+    votingTopic : VotingTopic
+  where
+    signatory party
+    observer issuer, judge
+
+    key (party, votingTopic.id) : (Party, Text)
+    maintainer key._1
+
+
+
+
+setup : Script ()
+setup = script do
+  issuer  <- allocateParty "Issuer"
+  judge   <- allocateParty "Judge"
+  voter1  <- allocateParty "Voter1"
+  voter2  <- allocateParty "Voter2"
+  voter3  <- allocateParty "Voter3"
+
+  requestVotingTopicCid <- submit issuer do createCmd RequestVotingTopic with issuer; topic = "New project?"; judge; voters = [ voter1, voter2, voter3]; id = "topic1" 
+
+  votingTopicCid <- submit judge do exerciseCmd requestVotingTopicCid Accept
+
+  submitMustFail judge do exerciseCmd requestVotingTopicCid Accept
+
+  vote1 <- submit voter1 do exerciseCmd votingTopicCid SubmitVote with pol = Yes, party = voter1
+  submitMustFail voter1 do exerciseCmd votingTopicCid SubmitVote with pol = No, party = voter1
+
+  submitMustFail issuer do exerciseCmd votingTopicCid SubmitVote with pol = Yes, party = issuer
+  submitMustFail judge do exerciseCmd votingTopicCid SubmitVote with pol = Yes, party = judge
+
+  vote2 <- submit voter2 do exerciseCmd votingTopicCid SubmitVote with pol = Yes, party = voter2
+  vote3 <- submit voter3 do exerciseCmd votingTopicCid SubmitVote with pol = No, party = voter3
+
+  submit issuer do exerciseCmd votingTopicCid CompleteVoting with voteCids = [vote1, vote2, vote3]
+
+  return ()
