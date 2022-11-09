@@ -1,5 +1,7 @@
 module Tutor.ChildSupport where
 
+import Daml.Script
+import DA.List
 -- child support money
 -- pay monthly - specified amount
 --
@@ -7,7 +9,56 @@ module Tutor.ChildSupport where
 data PayFrequency = Monthly | Weekly
   deriving (Show, Eq)
 
-template ChildSupportOrder
+template PendingCSOA
+  with
+    finalContract: ChildSupportArbitration
+    alreadySigned: [Party]
+  where
+    signatory alreadySigned
+    observer finalContract.arbiter, finalContract.party1, finalContract.party2
+    ensure
+      -- Can't have duplicate signatories
+      unique alreadySigned
+
+    -- The parties who need to sign is the finalContract.signatories with alreadySigned filtered out
+    let toSign = filter (`notElem` alreadySigned) finalContract.signatories
+
+    choice Sign : ContractId PendingCSOA with
+        signer : Party
+      controller signer
+        do
+          -- Check the controller is in the toSign list, and if they are, sign the Pending contract
+          assert (signer `elem` toSign)
+          create this with alreadySigned = signer :: alreadySigned    
+    choice Finalize : ContractId ChildSupportArbitration with
+        signer : Party
+      controller signer
+        do
+          -- Check that all the required signatories have signed Pending
+          assertMsg "Not all parties have signed yet" (sort alreadySigned == sort finalContract.signatories)
+          create finalContract
+
+template ChildSupportArbitration 
+  with 
+    arbiter : Party
+    party1  : Party
+    party2  : Party
+    signatories : [Party]
+  where
+    signatory signatories
+    ensure (signatories == [arbiter, party1, party2])
+    choice Decision : ContractId ChildSupportOrder 
+      with
+        cso : CSO
+      controller arbiter
+        do
+          now <- getTime
+          assertMsg "The Issuer on the Child Support Order is not the same as the arbiter" (cso.issuer == arbiter) 
+          assertMsg "The Receiver on the Child Support Order is not the same as any of the parties" (cso.receiver == party1 || cso.receiver == party2) 
+          assertMsg "The Sender on the Child Support Order is not the same as any of the parties" (cso.sender == party1   || cso.sender == party2)
+          create ChildSupportOrder with cso; createdAt = now
+
+data CSO = CSO 
   with
     receiver        : Party
     sender          : Party
@@ -16,11 +67,24 @@ template ChildSupportOrder
     duration        : Int
     payDate         : Int
     payFrequency    : PayFrequency
+  deriving (Show, Eq)
+  --receiverAccount : ContractId Account
+
+template ChildSupportOrder
+  with
+    cso : CSO
+    {-receiver      : Party
+    sender          : Party
+    amount          : Decimal
+    issuer          : Party
+    duration        : Int
+    payDate         : Int
+    payFrequency    : PayFrequency-}
     createdAt       : Time
-    receiverAccount : ContractId Account
+    --receiverAccount : ContractId Account
   where
-    signatory issuer
-    observer receiver, sender
+    signatory cso.issuer, cso.receiver, cso.sender
+    
 
 template Account
   with
@@ -29,3 +93,30 @@ template Account
     balance : Decimal
   where
     signatory issuer, owner
+
+setup : Script ()
+setup = script do
+  party1  <- allocateParty "Party One"
+  party2  <- allocateParty "Party Two"
+  arbiter <- allocateParty "Arbiter"
+  --
+  let finalContract = ChildSupportArbitration with arbiter; party1; party2; signatories = [arbiter, party1, party2]
+  --
+  pendCid <- submit party1 do createCmd PendingCSOA with finalContract; alreadySigned = [party1]
+  pendCid <- submit arbiter do exerciseCmd pendCid Sign with signer = arbiter
+  pendCid <- submit party2 do exerciseCmd pendCid Sign with signer = party2
+  --
+  arbitrationCid <- submit party1 do exerciseCmd pendCid Finalize with signer = party1
+  --
+  let 
+    cso = CSO with 
+      receiver = party2
+      sender = party1
+      amount = 500.0
+      issuer = arbiter
+      duration = 1
+      payDate = 1
+      payFrequency = Monthly
+  submit arbiter do exerciseCmd arbitrationCid Decision with cso
+  --
+  return ()
