@@ -1,6 +1,7 @@
 module Tutor.Auction where
 
 import Daml.Script
+import DA.List
 
 template CustomerRequest 
   with 
@@ -85,6 +86,43 @@ template Auction
     observer bidders
     key (auctioneer, seller, id) : (Party, Party, Text)
     maintainer key._1, key._2
+
+    -- Iva --
+    nonconsuming choice SubmitBid : ContractId Bid
+      with
+        bidder     : Party
+        price      : Decimal
+      controller bidder
+      do
+        assert (price > basePrice)
+        assert (bidder `elem` bidders)
+        create Bid with auction = this, ..
+
+    choice CompleteAuction: ContractId AuctionResult
+      with 
+        bidIds: [ContractId Bid]
+      controller seller
+        do 
+          allBids <- mapA (\id -> fetch id) bidIds
+          let sortedBids = (sortOn (\x -> x.price) ) allBids
+          create AuctionResult with auction = this; bids = reverse sortedBids
+
+template Bid 
+  with
+    bidder  : Party
+    price   : Decimal
+    auction : Auction
+  where
+    signatory bidder
+    observer auction.auctioneer, auction.seller
+
+template AuctionResult
+  with
+    auction : Auction
+    bids    : [ Bid ]
+  where
+    signatory auction.seller
+    observer map (\x -> x.bidder) bids
     
     
 
@@ -126,6 +164,12 @@ setup = script do
 
   requestAuctionCid <- submit customer1 do exerciseByKeyCmd @Service (customer1, auctioneer) PutToAuction with id = "Auction1"; item = "Rare Jewel"; quantity = 1.0; basePrice = 1_000_000.0
   auctionCid <- submit auctioneer do exerciseByKeyCmd @Service (customer1, auctioneer) AcceptAndAdvertise with serviceCidList; id = "Auction1"
+  
+  bid1 <- submit customer2 do exerciseCmd auctionCid SubmitBid with bidder = customer2, price = 1_000_001.0
+  bid2 <- submit customer3 do exerciseCmd auctionCid SubmitBid with bidder = customer3, price = 1_000_001.0
+
+  submit customer1 do exerciseCmd auctionCid CompleteAuction with bidIds = [bid1, bid2]
+
   return ()
   
     
